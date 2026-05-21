@@ -12,7 +12,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [Barcode Counts to Median Bin for No Ligand Samples](https://rpubs.com/lucablipp/1434481)
 
-[Barcode Counts to Median Bin for Fumarate Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_Fumarate.html)
+[Barcode Counts to Median Bin for Fumarate Samples](https://rpubs.com/lucablipp/1434486)
 
 [Barcode Counts to Median Bin for Aspartate Samples](https://rpubs.com/lucablipp/1434482)
 
