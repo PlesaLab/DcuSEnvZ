@@ -24,7 +24,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [Gain-of-Function Analysis](https://rpubs.com/lucablipp/1434472)
 
-[Dial-Out Mutant Selection](Rendered_HTML/Dial_Out_Mutant_Selection.html)
+[Dial-Out Mutant Selection](https://rpubs.com/lucablipp/1434485)
 
 **NCBI BioProject:**
 - Project Accession Number: PRJNA1468850 for raw .fastq files used in Makefile
