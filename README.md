@@ -8,7 +8,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 **Links to Rendered Code:**
 
-[synTCS-MutLib bin boundaries and population fraction calculations](Rendered_HTML/synTCS-MutLib_FACS_Bin_Population_Fractions.html)
+[synTCS-MutLib bin boundaries and population fraction calculations](Scripts/synTCS-MutLib_FACS_Bin_Population_Fractions.ipynb)
 
 [Barcode Counts to Median Bin for No Ligand Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_NoLigand.html)
 
@@ -18,7 +18,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [Merge and MEFL Convert](https://rpubs.com/lucablipp/1434468)
 
-[Structure Annotation - DSSP Output Processing](Rendered_HTML/DSSP_output_processing.html)
+[Structure Annotation - DSSP Output Processing](Scripts/DSSP_output_processing.ipynb)
 
 [Fold Change Heatmaps](Rendered_HTML/Fold_Change_Heatmaps.html)
 
