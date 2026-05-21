@@ -1,0 +1,335 @@
+---
+title: "Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases"
+author: 'Authors: <font color="blue">Luca B. Lippert, </font color="black">Samuel R. Hinton, Andrew Holston, Karl J. Romanowicz, Calin Plesa'
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+---
+
+<font color="black"> **R Notebook:** <font color="green">Provides reproducible analysis for **Association of mutant sequence, barcode, and inferred fluorescence phenotype** in the following manuscript: <font color="black">
+
+**Citation:** Lippert LB, Hinton SR, Holston A, Romanowicz KJ, Plesa C. Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases. *In Prep.* 2026.
+
+**GitHub Repository:** <https://github.com/PlesaLab/DcuSEnvZ>
+
+# Experiment
+
+<font color="black">This pipeline processes</font> <font color="red">*all barcode-sequence pairs and their associated median bin scores for all three conditions*. <font color="black">Here, previously generated files for all three conditions (containing barcodes, their associated nucleotide and amino acid sequences, activation ("median bin") scores, the lower and upper indices of their activation bins) are merged. Median bin scores are then converted to molecules of equivalent fluorescein (MEFL)
+
+```{css, echo=FALSE}
+.badCode {
+background-color: lightpink;
+font-weight: bold;
+}
+
+.goodCode {
+background-color: lightgreen;
+font-weight: bold;
+}
+
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+# Set global options for notebook
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  message = TRUE,
+  results = "markup",
+  collapse = FALSE
+)
+# Getting the path of your current open file and set as wd
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+print(getwd())
+```
+
+# Packages
+
+The following R packages must be installed prior to loading into the R session. See the **Reproducibility** tab for a complete list of packages and their versions used in this workflow.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+# Make a vector of required packages
+required.packages <- c("devtools", "knitr", "patchwork", "tidyverse", "ggplot2", "dplyr", "tidyr", "magrittr", "stringr", "seqinr", "ggridges")
+
+# Load required packages
+lapply(required.packages, library, character.only = TRUE)
+```
+
+```{r include=FALSE}
+# set.seed is used to fix the random number generation to make the results repeatable
+set.seed(123)
+```
+
+# Merge Condition Data and MEFL Convert Pipeline
+
+<font color="blue">**This section is based on the R file: "Merge_and\_.R".**<font color="black"> It describes how merge the data from all three conditions, convert from 'median bin' to MEFL, and calculate phenotype scores for all barcode-sequence pairs observed in the dataset. The end result is a .CSV file containing the total set of observed barcode-sequence pairs and nine values which describe the associated phenotype
+
+1.  No Ligand Median MEFL
+2.  Fumarate Median MEFL
+3.  Aspartate Median MEFL
+4.  No Ligand Fold-change
+5.  Fumarate Fold-change
+6.  Aspartate Fold-change
+7.  Fumarate Dynamic Range
+8.  Aspartate Dynamic Range
+9.  Ligand Specificity
+
+## Read in data
+
+```{r}
+NoLig_all <- read.csv(file="./output_files/DcuS_NoLigand_bin_distribution-byBC.csv", head=T, sep=",")
+
+Fum_all <- read.csv(file="./output_files/DcuS_Fumarate_bin_distribution-byBC.csv", head=T, sep=",")
+
+Asp_all <- read.csv(file="./output_files/DcuS_Aspartate_bin_distribution-byBC.csv", head=T, sep=",")
+```
+
+## Filter all barcodes by number of reads
+
+Keep only barcodes with \> 10 reads
+
+```{r}
+NoLig_all <- NoLig_all %>%
+  filter(BC_SorTotReads>=10) %>%
+  dplyr::rename(AAseq=seq,NoLig_LowerIndex=lower_index, NoLig_UpperIndex=upper_index, NoLig_Median=median, NoLig_Reads=BC_SorTotReads)
+
+Fum_all <- Fum_all %>%
+  filter(BC_SorTotReads>=10) %>%
+  dplyr::rename(AAseq=seq,Fum_LowerIndex=lower_index, Fum_UpperIndex=upper_index, Fum_Median=median, Fum_Reads=BC_SorTotReads)
+
+Asp_all <- Asp_all %>%
+  filter(BC_SorTotReads>=10) %>%
+  dplyr::rename(AAseq=seq,Asp_LowerIndex=lower_index, Asp_UpperIndex=upper_index, Asp_Median=median, Asp_Reads=BC_SorTotReads)
+```
+
+Collapse duplicated rows
+
+```{r}
+# Check if duplicated rows are identical or if there are differences that need to be resolved - this process was repeated separately for all conditions elsewhere 
+A_dupes <- Asp_all %>%
+  group_by(barcode) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# For each barcode, check if all rows are identical
+A_dupes %>%
+  group_by(barcode) %>%
+  mutate(
+    # Check if amino acid sequences differ within this barcode
+    seq_differs = n_distinct(AAseq) > 1,
+    # Check if phenotype differs within this barcode
+    phenotype_differs = n_distinct(Asp_Median) > 1
+  ) %>%
+  ungroup()
+
+# Find barcodes where the duplicates don't match
+A_dupes %>%
+  group_by(barcode) %>%
+  filter(
+    n_distinct(AAseq) > 1 | n_distinct(Asp_Median) > 1
+  ) %>%
+  arrange(barcode) %>%
+  ungroup()
+
+A_dupes %>%
+  group_by(barcode) %>%
+  summarise(
+    n_copies = n(),
+    seq_matches = n_distinct(AAseq) == 1,
+    phenotype_matches = n_distinct(Asp_Median) == 1,
+    all_identical = seq_matches & phenotype_matches
+  ) %>%
+  filter(!all_identical)  # Show only problematic barcodes
+# Empty tibble means that all duplicated rows are identical, so will merge based on firsr appearance below
+
+# Collapse all duplicated rows
+NoLig_all_mod <- NoLig_all %>%
+  select(barcode,NTseq,AAseq,NoLig_LowerIndex,NoLig_UpperIndex,NoLig_Median,NoLig_Reads,presort1reads,presort2reads) %>%
+  group_by(barcode) %>%
+  summarize(
+    NTseq = dplyr::first(NTseq),
+    AAseq = dplyr::first(AAseq),
+    NoLig_Reads = dplyr::first(NoLig_Reads),
+    presort1reads=dplyr::first(presort1reads),
+    presort2reads=dplyr::first(presort2reads),
+    across(c(NoLig_LowerIndex,NoLig_UpperIndex,NoLig_Median), ~mean(.x,na.rm=TRUE))
+  )
+
+Fum_all_mod <- Fum_all %>%
+  select(barcode,NTseq,AAseq,Fum_LowerIndex,Fum_UpperIndex,Fum_Median,Fum_Reads,presort1reads,presort2reads) %>%
+  group_by(barcode) %>%
+  summarize(
+    NTseq = dplyr::first(NTseq),
+    AAseq = dplyr::first(AAseq),
+    Fum_Reads = dplyr::first(Fum_Reads),
+    presort1reads=dplyr::first(presort1reads),
+    presort2reads=dplyr::first(presort2reads),
+    across(c(Fum_LowerIndex,Fum_UpperIndex,Fum_Median), ~mean(.x,na.rm=TRUE))
+  )
+
+Asp_all_mod <- Asp_all %>%
+  select(barcode,NTseq,AAseq,Asp_LowerIndex,Asp_UpperIndex,Asp_Median,Asp_Reads,presort1reads,presort2reads) %>%
+  group_by(barcode) %>%
+  summarize(
+    NTseq = dplyr::first(NTseq),
+    AAseq = dplyr::first(AAseq),
+    Asp_Reads = dplyr::first(Asp_Reads),
+    presort1reads=dplyr::first(presort1reads),
+    presort2reads=dplyr::first(presort2reads),
+    across(c(Asp_LowerIndex,Asp_UpperIndex,Asp_Median), ~mean(.x,na.rm=TRUE))
+  )
+
+```
+
+## Merge data across conditions by barcode
+
+```{r}
+merged_BC <- merge(merge(NoLig_all_mod, Fum_all_mod, by = "barcode"), Asp_all_mod, by = "barcode")
+
+# Keep only barcode, seq, lower index, uppder index, and score/bin for each condition; the other columns are no longer needed at this point or are repeated
+condensed_merged_BC <- merged_BC %>%
+  select(barcode,NTseq.x,AAseq.x,NoLig_LowerIndex,NoLig_UpperIndex,NoLig_Median,Fum_LowerIndex,Fum_UpperIndex,Fum_Median,Asp_LowerIndex,Asp_UpperIndex,Asp_Median,presort1reads.x,presort2reads.x,NoLig_Reads,Fum_Reads,Asp_Reads)
+
+# remove negative infinite values from dataframe, push to 0; this occurred as an error in the cumulative sum function in previous scripts
+condensed_merged_BC <- condensed_merged_BC %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.infinite(.), 0, .)))
+```
+
+## Convert from bin to MEFL
+
+Load in the bin to MEFL conversion "lookup" tables. There are separate ones for No ligand and Fumarate+Aspartate because those conditions were sorted on different days.
+
+```{r}
+# No Ligand MEFL lookup table
+bin_to_MEFL_NL <- read.csv(file="./input_files/bins_to_MEFL_NoLigand.tsv",head=TRUE,sep="\t")
+
+bin_to_MEFL_NL <- bin_to_MEFL_NL %>%
+  select(X,X488.1..530_30.A) %>%
+  dplyr::rename(bin=X, MEFL=X488.1..530_30.A) %>%
+  add_row(bin = 12, MEFL = 500000, .after = 12) %>%
+  mutate(logMEFL = log10(MEFL))
+
+# Fumarate and Aspartate MEFL lookup table
+bin_to_MEFL_FA <- read.csv(file="./input_files/bins_to_MEFL_Fumarate-Aspartate.tsv",head=TRUE,sep="\t")
+
+bin_to_MEFL_FA <- bin_to_MEFL_FA %>%
+  select(X,X488.1..530_30.A) %>%
+  dplyr::rename(bin=X, MEFL=X488.1..530_30.A) %>%
+  add_row(bin = 12, MEFL = 500000, .after = 12) %>%
+  mutate(logMEFL = log10(MEFL))
+```
+
+Create an interpolation function to convert nondiscreet bin values to MEFL
+
+```{r}
+bin_to_MEFL_inter_NL <- approxfun(bin_to_MEFL_NL$bin, bin_to_MEFL_NL$logMEFL, rule = 2)
+bin_to_MEFL_inter_FA <- approxfun(bin_to_MEFL_FA$bin, bin_to_MEFL_FA$logMEFL, rule = 2)
+```
+
+Convert from units of "median bin" to MEFL
+
+```{r}
+MEFL_merged_BC <- condensed_merged_BC %>%
+  mutate(
+    NoLig_LowerIndex_logMEFL = bin_to_MEFL_inter_NL(NoLig_LowerIndex),
+    NoLig_UpperIndex_logMEFL = bin_to_MEFL_inter_NL(NoLig_UpperIndex),
+    NoLig_Median_logMEFL = bin_to_MEFL_inter_NL(NoLig_Median),
+    
+    Fum_LowerIndex_logMEFL = bin_to_MEFL_inter_FA(Fum_LowerIndex),
+    Fum_UpperIndex_logMEFL = bin_to_MEFL_inter_FA(Fum_UpperIndex),
+    Fum_Median_logMEFL = bin_to_MEFL_inter_FA(Fum_Median),
+    
+    Asp_LowerIndex_logMEFL = bin_to_MEFL_inter_FA(Asp_LowerIndex),
+    Asp_UpperIndex_logMEFL = bin_to_MEFL_inter_FA(Asp_UpperIndex),
+    Asp_Median_logMEFL = bin_to_MEFL_inter_FA(Asp_Median)
+  ) %>%
+  mutate(NoLig_LowerIndex_logMEFL = 10^NoLig_LowerIndex_logMEFL,
+         NoLig_UpperIndex_logMEFL = 10^NoLig_UpperIndex_logMEFL,
+         NoLig_Median_MEFL = 10^NoLig_Median_logMEFL,
+         
+         Fum_LowerIndex_logMEFL = 10^Fum_LowerIndex_logMEFL,
+         Fum_UpperIndex_logMEFL = 10^Fum_UpperIndex_logMEFL,
+         Fum_Median_MEFL = 10^Fum_Median_logMEFL,
+         
+         Asp_LowerIndex_logMEFL = 10^Asp_LowerIndex_logMEFL,
+         Asp_UpperIndex_logMEFL = 10^Asp_UpperIndex_logMEFL,
+         Asp_Median_MEFL = 10^Asp_Median_logMEFL)
+```
+
+Keep only MEFL values for each barcode
+
+```{r}
+merged_BC_MEFL_compare <- MEFL_merged_BC %>%
+  select(barcode,NTseq.x,AAseq.x,presort1reads.x,presort2reads.x,NoLig_Reads,Fum_Reads,Asp_Reads,NoLig_Median_MEFL,Fum_Median_MEFL,Asp_Median_MEFL) %>%
+  dplyr::rename(NTseq=NTseq.x, AAseq=AAseq.x, presort1reads=presort1reads.x,presort2reads=presort2reads.x)
+```
+
+## Calculate phenotype scores for all barcode-sequence pairs
+
+These include: no ligand fold-change, fumarate fold-change, aspartate fold-change, fumarate dynamic range, aspartate dynamic range, and ligand specificity scores.
+
+```{r}
+# To calculate the fold-change score, which is based on how the mutant's fluorescence changed relative to wildtype, we need to calculate the wildtype median fluorescence in the dataset. 
+
+# define a string identifier for the wildtype DcuS/EnvZ chimera 
+wt_seq = "RHSLPYRMLRKRPMKLSTTVILMVSAVLFSVLLVVHLIYFSQISDMTRDGLANKALAVARTLADSPEIRQGLQKKPQESGIQAIAEAVRKRNDLLFIVVTDMQSLRYSHPEAQRIGQPFKGDDILKALNGEENVAINRGFLAQALRVFTPIYDENHKQIGVVAIGLELSRVTQQINDSRWSLQMAAGVKQLA"
+
+# filter for the wildtype data
+wt_data <- merged_BC_MEFL_compare %>%
+  filter(AAseq==wt_seq)
+
+# Calculate wildtype median MEFL values
+NoLig_WTmed = median(wt_data$NoLig_Median_MEFL)
+Fum_WTmed = median(wt_data$Fum_Median_MEFL)
+Asp_WTmed = median(wt_data$Asp_Median_MEFL)
+
+print("Wildtype DcuS/EnvZ Chimera Inferred MEFL")
+print(paste0("No Ligand: ", round(NoLig_WTmed,2), " MEFL"))
+print(paste0("Fumarate: ", round(Fum_WTmed,2), " MEFL"))
+print(paste0("Aspartate: ", round(Asp_WTmed,2), " MEFL"))
+```
+
+```{r}
+merged_BC_MEFL_norm <- merged_BC_MEFL_compare %>%
+  mutate(
+    NoLig_fc = log2(NoLig_Median_MEFL / NoLig_WTmed),
+    Fum_fc = log2(Fum_Median_MEFL / Fum_WTmed),
+    Asp_fc = log2(Asp_Median_MEFL / Asp_WTmed),
+    Fum_DNR = log2(Fum_Median_MEFL / NoLig_Median_MEFL),
+    Asp_DNR = log2(Asp_Median_MEFL / NoLig_Median_MEFL),
+    Lig_spec = log2(Asp_Median_MEFL / Fum_Median_MEFL),
+    AAlen = str_length(AAseq)
+  )
+```
+
+## Export the data as a CSV file
+
+```{r}
+write.csv(merged_BC_MEFL_norm,
+          "./output_files/All_DcuS_Data-medianMEFL.csv", row.names = FALSE)
+```
+
+# Reproducibility
+
+The session information is provided for full reproducibility.
+
+```{r}
+devtools::session_info()
+```

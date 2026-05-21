@@ -1,0 +1,616 @@
+---
+title: "Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases"
+author: 'Authors: <font color="blue">Luca B. Lippert, </font color="black">Samuel R. Hinton, Andrew Holston, Karl J. Romanowicz, Calin Plesa'
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+---
+
+<font color="black"> **R Notebook:** <font color="green">Provides reproducible analysis for **Association of mutant sequence, barcode, and inferred fluorescence phenotype** and **Structural annotations for heatmaps** in the following manuscript: <font color="black">
+
+**Citation:** Lippert LB, Hinton SR, Holston A, Romanowicz KJ, Plesa C. Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases. *In Prep.* 2026.
+
+**GitHub Repository:** <https://github.com/PlesaLab/DcuSEnvZ>
+
+# Experiment
+
+<font color="black">This pipeline processes</font> <font color="red">*barcode-sequence-phenotype data previously generated in Merge_and_MEFL_Convert.Rmd*. <font color="black">
+
+```{css, echo=FALSE}
+.badCode {
+background-color: lightpink;
+font-weight: bold;
+}
+
+.goodCode {
+background-color: lightgreen;
+font-weight: bold;
+}
+
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+# Set global options for notebook
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  message = TRUE,
+  results = "markup",
+  collapse = FALSE
+)
+# Getting the path of your current open file and set as wd
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+print(getwd())
+```
+
+# Packages
+
+The following R packages must be installed prior to loading into the R session. See the **Reproducibility** tab for a complete list of packages and their versions used in this workflow.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+# Make a vector of required packages
+required.packages <- c("devtools", "knitr", "patchwork", "tidyverse", "ggplot2", "dplyr", "tidyr", "magrittr", "stringr", "seqinr", "ggnewscale")
+
+# Load required packages
+lapply(required.packages, library, character.only = TRUE)
+```
+
+```{r include=FALSE}
+# set.seed is used to fix the random number generation to make the results repeatable
+set.seed(123)
+```
+
+# Heatmap Visualization of Fold-Change Scores Pipeline
+
+<font color="blue">**This section is based on the R file: "FoldChange_Heatmaps.R".**<font color="black"> It describes how to load all of the pre-existing barcode-sequence-phenotype data necessary for downstream visualization. The end result is three heatmaps showing the fold-change of fluorescence phenotypes associated with each mutation observed in synTCS-MutLib under three conditions: no ligand, fumarate, and aspartate.
+
+## Read in data
+
+```{r}
+merged_BC_MEFL_norm <- read.csv(file="./output_files/All_DcuS_Data-medianMEFL.csv", head=T, sep=",")
+```
+
+## Wrangle
+
+...the data to associate phenotype with the specific amino acid mutation found in mutant sequences.
+
+For each mutant DcuS sequence, align it to wild-type sequence and determine which amino acids differ. Record three columns: amino acid, position, mutation
+
+```{r}
+# Filter to only keep mutants that are the correct AA length (192 amino acids)
+merged_BC_MEFL_norm <- merged_BC_MEFL_norm %>% 
+  filter(AAlen==192)
+
+# make a vector of the wild-type sequence to compare mutant sequences to
+wt_seq = "RHSLPYRMLRKRPMKLSTTVILMVSAVLFSVLLVVHLIYFSQISDMTRDGLANKALAVARTLADSPEIRQGLQKKPQESGIQAIAEAVRKRNDLLFIVVTDMQSLRYSHPEAQRIGQPFKGDDILKALNGEENVAINRGFLAQALRVFTPIYDENHKQIGVVAIGLELSRVTQQINDSRWSLQMAAGVKQLA"
+# WT sequence as a vector
+wt_seq_vec <- str_split(wt_seq, "")[[1]]
+
+# custom mutation parser
+find_mutations <- function(mut_seq) {
+  
+  mut_vec <- str_split(mut_seq, "")[[1]]
+  
+  # safety check
+  if (length(mut_vec) != length(wt_seq_vec)) {
+    return(NA_character_)
+  }
+  
+  diff_pos <- which(mut_vec != wt_seq_vec)
+  
+  # no mutations
+  if (length(diff_pos) == 0) {
+    return(NA_character_)
+  }
+  
+  paste0(
+    wt_seq_vec[diff_pos],
+    diff_pos +1,
+    mut_vec[diff_pos],
+    collapse = "_"
+  )
+}
+
+# apply function
+merged_BC_MEFL_norm <- merged_BC_MEFL_norm %>%
+  mutate(mutations = sapply(AAseq, find_mutations))
+
+# Check to make sure the function worked - wildtype sequences in the dataset will have no differences and mutations will have an NA value. 
+na_filter <- merged_BC_MEFL_norm %>%
+  filter(is.na(mutations))
+```
+
+3957 corresponds to the known number of barcodes associated with the wildtype sequence, indicating that the map_chr function accurately identified cases where the mutant sequence matched wt_seq_vec.
+
+Now, filter out the wildtype data.
+
+```{r}
+observed <- merged_BC_MEFL_norm %>%
+  filter(!is.na(mutations)) 
+```
+
+For each mutation observed, calculate the average inferred MEFL, fold-change, dynamic range, and ligand specificity score.
+
+```{r}
+observed_1 <- observed %>%
+  # clean the data and keep only columns used later
+  select(mutations, NoLig_Median_MEFL, Fum_Median_MEFL, Asp_Median_MEFL, NoLig_fc, Fum_fc, Asp_fc, Fum_DNR, Asp_DNR, Lig_spec) %>%
+  
+  # create a column that separates all phenotype scores by each mutation associated with it
+  mutate(mutation_list = strsplit(mutations, "_")) %>%
+  unnest(mutation_list)
+
+
+# Calculate the mean of all phenotype scores for each observed mutation. 
+observed_1 <- observed_1 %>%
+  group_by(mutation_list) %>%
+  summarize(
+    n = n(),
+    
+    NoLig_Median_MEFL_avg = mean(NoLig_Median_MEFL, na.rm=T),
+    Fum_Median_MEFL_avg = mean(Fum_Median_MEFL, na.rm=T),
+    Asp_Median_MEFL_avg = mean(Asp_Median_MEFL, na.rm=T),
+    
+    NoLig_fc_avg = mean(NoLig_fc, na.rm=T),
+    Fum_fc_avg = mean(Fum_fc, na.rm=T),
+    Asp_fc_avg = mean(Asp_fc, na.rm=T),
+    
+    Fum_DNR_avg = mean(Fum_DNR, na.rm=T),
+    Asp_DNR_avg = mean(Asp_DNR, na.rm=T),
+    Lig_spec_avg = mean(Lig_spec, na.rm=T)
+  )
+```
+
+We will only use the average scores for plotting, but the other values are useful to have on hand.
+
+## Prep the data (+ 3 additional dataframes) for plotting
+
+```{r}
+# split up the mutation string into the wildtype amino acid, position, and mutant amino acid for easier handling when making heatmaps. 
+observed_1 <- observed_1 %>%
+  tidyr::extract(mutation_list,
+                 into = c("wildtype", "position", "mutant"),
+                 regex = "^([A-Z])([0-9]+)([A-Z])$",
+                 convert = TRUE) 
+
+observed_plot <- observed_1 %>%
+ # and re-create the mutation identifier for downstream use
+  mutate(mut = paste0(mutant, position))
+```
+
+Adjust amino acid ordering to group by similar chemical properties
+
+```{r}
+# custom ordering of amino acids for heatmaps
+
+ordered_aa <- c("K", "R", "H", "E", "D", "N", "Q", "T", "S", "C", "G", "A", "V", "L", "I", "M", "P", "Y", "F", "W")
+position = 1:192
+
+# fill in the rest of the possible mutations at each position so they can be colored in gray later
+observed_plot1 <- observed_plot %>%
+  complete(
+    position = full_seq(position, 1),
+    mutant = ordered_aa
+  )
+
+# re-order the data to align with custom amino acid order
+observed_plot1 <- observed_plot1 %>%
+  mutate(aa = factor(mutant, levels = ordered_aa))
+```
+
+Calculate average scores by position; these values will be plotting above the heatmap to summarize the data by position.
+
+```{r}
+obsvered_position_avgs <- observed_plot1 %>%
+  group_by(position) %>%
+  summarize(
+    NoLig_Median_MEFL_PosAvg = mean(NoLig_Median_MEFL_avg, na.rm=T),
+    Fum_Median_MEFL_PosAvg = mean(Fum_Median_MEFL_avg, na.rm=T),
+    Asp_Median_MEFL_PosAvg = mean(Asp_Median_MEFL_avg, na.rm=T),
+    
+    NoLig_fc_PosAvg = mean(NoLig_fc_avg, na.rm=T),
+    Fum_fc_PosAvg = mean(Fum_fc_avg, na.rm=T),
+    Asp_fc_PosAvg = mean(Asp_fc_avg, na.rm=T),
+    
+    Fum_DNR_PosAvg = mean(Fum_DNR_avg, na.rm=T),
+    Asp_DNR_PosAvg = mean(Asp_DNR_avg, na.rm=T),
+    Lig_spec_PosAvg = mean(Lig_spec_avg, na.rm=T),
+  )
+
+```
+
+Import and wrangle secondary structure and domain annotation data.
+
+These annotations also be shown above the heatmap to help identify trends in the data with domain or secondary structure. The secondary structure data came from the DSSP server, the usage of which is described in the Methods and processed in DcuS_DSSP.ipynb
+
+```{r}
+# import DSSP data generated for the wildtype DcuS sequence
+dcus_ss <- read.csv(file="./input_files/DcuS_secondary_structure_DSSP.csv",head=TRUE,sep=",")
+
+# clean it up and assign a binary identifier to secondary structure types; 1 for alpha helices, 0 for beta pleated sheets, and NA for everything else
+dcus_ss1 <- dcus_ss %>%
+  dplyr::rename(pos=seq_id, SS=structure, aa=compound_letter) %>%
+  mutate(ss = case_when(
+    SS %in% c("Alphahelix", "Helix_3") ~ "helix",
+    SS %in% c("Strand") ~ "sheet",
+    SS %in% c("Loop", "Bend", "Turn", "Betabridge", "Helix_PPII") ~ "loop"
+  )) %>%
+  mutate(score = case_when(
+    ss %in% "helix" ~ 1,
+    ss %in% "sheet" ~ 0,
+    ss %in% "loop" ~ NA
+  ))
+
+# add a column that specifies what domain each residue is associated with: transmembrane 1 (TM1), sensory (S), and transmembrane 2 (TM2)
+# these are based on a previously annotated DcuS structure - PDB accession: P0AEC8
+dcus_ss2 <- dcus_ss %>%
+  dplyr::rename(pos=seq_id, SS=structure) %>%
+  mutate(domain = case_when(
+    pos %in% 20:40 ~ "TM1",
+    pos %in% 41:180 ~ "S",
+    pos %in% 181:192 ~ "TM2"
+  )) %>%
+  mutate(domain_identifier = case_when(
+    domain %in% "TM1" ~ 1,
+    domain %in% "S" ~ 50,
+    domain %in% "TM2" ~ 100
+  ))
+```
+
+## No Ligand Fold-Change Heatmap
+
+```{r}
+ggplot(observed_plot1, aes(x = position, y = aa, fill = NoLig_fc_avg)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",name="Fitness",
+                       na.value="gray", limit = c(-5,3.8)) +
+  
+  geom_segment(aes(x=1, y=22,xend = 192, yend=22), colour="gray0")+
+  geom_rect(data=obsvered_position_avgs, aes(xmin=position-0.5,xmax=position+0.5, ymin=21.5, ymax=22.5, fill=NoLig_fc_PosAvg), inherit.aes = FALSE) +
+  
+  geom_segment(aes(x=1, y=23.5,xend = 192, yend=23.5), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss1, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=23, ymax=24, fill=factor(score)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "0" = "lightskyblue",
+      "1" = "tomato"
+    ),
+    labels = c(
+      "0" = "β-sheet",
+      "1" = "α-helix"
+    ),
+    name = "Sec. struc.",
+    na.value = NA
+  ) +
+  
+  geom_segment(aes(x=1, y=25,xend = 192, yend=25), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss2, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=24.5, ymax=25.5, fill=factor(domain_identifier)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "1" = "plum1",
+      "50" = "mediumpurple1",
+      "100" = "plum1"
+    ),
+    labels = c(
+      "1" = "TM1",
+      "50" = "Sensory",
+      "100" = "TM2"
+    ),
+    name = "Domain",
+    na.value = NA
+  ) +
+  
+  labs(
+    title = "No Ligand Fold-Change",
+    x = "Position (aa)",
+    y = "Amino Acid",
+    fill = "Fitness"
+  ) +
+  scale_x_continuous(breaks=seq(0,192,10)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 12, hjust=1),
+    axis.title = element_text(size = 14, face = "bold"),
+    panel.grid = element_blank()
+    
+  )
+```
+
+## Fumarate Fold-Change Heatmap
+
+```{r}
+ggplot(observed_plot1, aes(x = position, y = aa, fill = Fum_fc_avg)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",name="Fitness",
+                       na.value="gray", limit = c(-5.1,4.3)) +
+  
+  geom_segment(aes(x=1, y=22,xend = 192, yend=22), colour="gray0")+
+  geom_rect(data=obsvered_position_avgs, aes(xmin=position-0.5,xmax=position+0.5, ymin=21.5, ymax=22.5, fill=Fum_fc_PosAvg), inherit.aes = FALSE) +
+  
+  geom_segment(aes(x=1, y=23.5,xend = 192, yend=23.5), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss1, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=23, ymax=24, fill=factor(score)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "0" = "lightskyblue",
+      "1" = "tomato"
+    ),
+    labels = c(
+      "0" = "β-sheet",
+      "1" = "α-helix"
+    ),
+    name = "Sec. struc.",
+    na.value = NA
+  ) +
+  
+  geom_segment(aes(x=1, y=25,xend = 192, yend=25), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss2, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=24.5, ymax=25.5, fill=factor(domain_identifier)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "1" = "plum1",
+      "50" = "mediumpurple1",
+      "100" = "plum1"
+    ),
+    labels = c(
+      "1" = "TM1",
+      "50" = "Sensory",
+      "100" = "TM2"
+    ),
+    name = "Domain",
+    na.value = NA
+  ) +
+  
+  labs(
+    title = "Fumarate Fold-Change",
+    x = "Position (aa)",
+    y = "Amino Acid",
+    fill = "Fitness"
+  ) +
+  scale_x_continuous(breaks=seq(0,192,10)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 12, hjust=1),
+    axis.title = element_text(size = 14, face = "bold"),
+    panel.grid = element_blank()
+  )
+```
+
+## Aspartate Fold-Change Heatmap
+
+```{r}
+ggplot(observed_plot1, aes(x = position, y = aa, fill = Asp_fc_avg)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",name="Fitness",
+                       na.value="gray", limit = c(-5.1,4.3)) +
+  
+  geom_segment(aes(x=1, y=22,xend = 192, yend=22), colour="gray0")+
+  geom_rect(data=obsvered_position_avgs, aes(xmin=position-0.5,xmax=position+0.5, ymin=21.5, ymax=22.5, fill=Asp_fc_PosAvg), inherit.aes = FALSE) +
+  
+  geom_segment(aes(x=1, y=23.5,xend = 192, yend=23.5), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss1, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=23, ymax=24, fill=factor(score)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "0" = "lightskyblue",
+      "1" = "tomato"
+    ),
+    labels = c(
+      "0" = "β-sheet",
+      "1" = "α-helix"
+    ),
+    name = "Sec. struc.",
+    na.value = NA
+  ) +
+  
+  geom_segment(aes(x=1, y=25,xend = 192, yend=25), colour="gray0")+
+  ggnewscale::new_scale_fill() +
+  geom_rect(data=dcus_ss2, aes(xmin=pos-0.5,xmax=pos+0.5, ymin=24.5, ymax=25.5, fill=factor(domain_identifier)), inherit.aes=F, color=NA) +
+  scale_fill_manual(
+    values = c(
+      "1" = "plum1",
+      "50" = "mediumpurple1",
+      "100" = "plum1"
+    ),
+    labels = c(
+      "1" = "TM1",
+      "50" = "Sensory",
+      "100" = "TM2"
+    ),
+    name = "Domain",
+    na.value = NA
+  ) +
+  
+  labs(
+    title = "Aspartate Fold-Change",
+    x = "Position (aa)",
+    y = "Amino Acid",
+    fill = "Fitness"
+  ) +
+  scale_x_continuous(breaks=seq(0,192,10)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 12, hjust=1),
+    axis.title = element_text(size = 14, face = "bold"),
+    panel.grid = element_blank()
+  )
+```
+
+## Correlation Plots
+
+For this, we will exclude mutations leading to DNR = 0
+
+```{r}
+dcus_AAseq_collapse <- observed %>%
+  # Separate out all observed mutations
+  mutate(mutation_list = strsplit(mutations, "_")) %>%
+  unnest(mutation_list) %>%
+  # collapse by amino acid sequence
+  group_by(mutation_list) %>%
+  summarize(n_barcodes = n_distinct(barcode),
+            AAseq_count = n(),
+            mutation_list = dplyr::first(mutation_list),
+            AAseq = dplyr::first(AAseq),
+            NoLig_fc  = mean(NoLig_fc),
+            Fum_fc = mean(Fum_fc),
+            Asp_fc = mean(Asp_fc),
+            Fum_dnr = mean(Fum_DNR),
+            Asp_dnr = mean(Asp_DNR)) %>%
+  #filter(str_length(mutations) <= 5) %>%
+  tidyr::extract(mutation_list,
+                 into = c("wildtype", "position", "mutant"),
+                 regex = "^([A-Z])([0-9]+)([A-Z])$",
+                 convert = TRUE) %>%
+  mutate(mutation_str = paste0(wildtype, position, mutant, sep=""))
+
+# classify collasped mutations based on if their dynamic ranges are within a loss-of-function (LOF) range
+activatable <- dcus_AAseq_collapse %>%
+  mutate(LOF = case_when(
+    Fum_dnr < 0.1 & Fum_dnr > -0.1 & Asp_dnr < 0.1 & Asp_dnr > -0.1 ~ "LOF_Both",
+    Fum_dnr < 0.1 & Fum_dnr > -0.1 ~ "LOF_Fum",
+    Asp_dnr < 0.1 & Asp_dnr > -0.1 ~ "LOF_Asp"
+  )) 
+
+activatable$LOF[is.na(activatable$LOF)] <- "Neither"
+
+
+# Create a dataframe which filters out mutations that are activated by either ligand 
+activatable_either <- activatable %>%
+  filter(LOF != "LOF_Both") %>%
+  select(!LOF)
+
+# Create a dataframe which filters out mutations that are activated by fumarate
+activatable_fum <- activatable %>%
+  filter(LOF != "LOF_Fum" & LOF != "LOF_Both") %>%
+  select(!LOF)
+
+# Create a dataframe which filters out mutations that are activated by aspartate
+activatable_asp <- activatable %>%
+  filter(LOF != "LOF_Asp" & LOF != "LOF_Both") %>%
+  select(!LOF)
+
+```
+
+Scatter plot for correlation between fumarate fitness and no ligand fitness without mutations that result in fumarate DNR = 0
+
+```{r}
+fita <- lm(Fum_fc ~ NoLig_fc, data = activatable_fum)      # linear regression, formula = y ~ x
+r2a <- summary(fita)$r.squared
+
+ggplot(activatable_fum, aes(x=NoLig_fc, y=Fum_fc)) +
+  geom_point() + 
+  geom_smooth(
+    method="lm",
+    formula = y ~ x,
+    se = FALSE
+  ) +
+  labs(#title = "Correlation between No Ligand and Fumarate fitness scores",
+    #subtitle = "Mutations with Fumarate DNR = 0 removed",
+    x="No Ligand fold-change",
+    y="Fumarate fold-change",
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = ", round(r2a, 3)),
+    hjust = 1.1, vjust = -2, size=8
+  ) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16, hjust=1),
+    axis.title = element_text(size = 20, face = "bold")
+  )
+
+```
+
+Scatter plot for correlation between aspartate fitness and no ligand fitness without mutations that result in aspartate DNR = 0
+
+```{r}
+fitb <- lm(Asp_fc ~ NoLig_fc, data = activatable_asp)      # linear regression, formula = y ~ x
+r2b <- summary(fitb)$r.squared
+
+ggplot(activatable_asp, aes(x=NoLig_fc, y=Asp_fc)) +
+  geom_point() + 
+  geom_smooth(
+    method="lm",
+    formula = y ~ x,
+    se = FALSE
+  ) +
+  labs(#title = "Correlation between No Ligand and Aspartate fitness scores",
+    #subtitle = "Mutations with Aspartate DNR = 0 removed",
+    x="No Ligand fold-change",
+    y="Aspartate fold-change",
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = ", round(r2b, 3)),
+    hjust = 1, vjust = -2.5, size=8
+  ) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16, hjust=1),
+    axis.title = element_text(size = 20, face = "bold")
+  )
+```
+
+Scatter plot for correlation bteween aspartate fitness and fumarate fitness witohut mutations that results in DNR = 0 for both ligands
+
+```{r}
+fitc <- lm(Asp_fc ~ Fum_fc, data = activatable_either) 
+r2c <- summary(fitc)$r.squared
+
+ggplot(activatable_either, aes(x=Fum_fc, y=Asp_fc)) +
+  geom_point() +
+  geom_smooth(
+    method = "lm",
+    formula = y~ x,
+    se = FALSE
+  ) +
+  labs(x = "Fumarate fold-change",
+       y = "Aspartate fold-change") +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = 0.630"),
+    hjust = 1.1, vjust = -2, size=8
+  ) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16, hjust=1),
+    axis.title = element_text(size = 20, face = "bold")
+  )
+```
+
+# Reproducibility
+
+The session information is provided for full reproducibility.
+
+```{r}
+devtools::session_info()
+```

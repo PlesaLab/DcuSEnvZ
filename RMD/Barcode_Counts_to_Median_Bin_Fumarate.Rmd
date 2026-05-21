@@ -1,0 +1,451 @@
+---
+title: "Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases"
+author: 'Authors: <font color="blue">Luca B. Lippert, </font color="black">Samuel R. Hinton, Andrew Holston, Karl J. Romanowicz, Calin Plesa'
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+---
+
+<font color="black"> **R Notebook:** <font color="green">Provides reproducible analysis for **Association of mutant sequence, barcode, and inferred fluorescence phenotype** in the following manuscript: <font color="black">
+
+**Citation:** Lippert LB, Hinton SR, Holston A, Romanowicz KJ, Plesa C. Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases. *In Prep.* 2026.
+
+**GitHub Repository:** <https://github.com/PlesaLab/DcuSEnvZ>
+
+# Experiment
+
+<font color="black">This pipeline processes</font> <font color="red">*barcode counts sequenced from twelve fluroescence-activated cell sorting (FACS) samples of the synTCS-MutLib strain in the fumarate condition*. <font color="black">Sequence data was generated using the Illumina NextSeq platform using paired-end sequencing read amplicons. Raw sequencing data was pre-processed on a high-performance computer using the Makefile script available in the project GitHub repository. Here, pre-processed barcode-count files for all twelve fumarate samples are merged, adjusted abundances are computed using the protocol from Biswas et al., (2021), and a median activation score- here, "median bin"- is calculated for each observed barcode. This analysis is replicated for the No Ligand and Aspartate samples.
+
+```{css, echo=FALSE}
+.badCode {
+background-color: lightpink;
+font-weight: bold;
+}
+
+.goodCode {
+background-color: lightgreen;
+font-weight: bold;
+}
+
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+# Set global options for notebook
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  message = TRUE,
+  results = "markup",
+  collapse = FALSE
+)
+# Getting the path of your current open file and set as wd
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+print(getwd())
+```
+
+# Packages
+
+The following R packages must be installed prior to loading into the R session. See the **Reproducibility** tab for a complete list of packages and their versions used in this workflow.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+# Make a vector of required packages
+required.packages <- c("devtools", "knitr", "patchwork", "tidyverse", "ggplot2", "dplyr", "tidyr", "magrittr", "stringr", "seqinr")
+
+# Load required packages
+lapply(required.packages, library, character.only = TRUE)
+```
+
+```{r include=FALSE}
+# set.seed is used to fix the random number generation to make the results repeatable
+set.seed(123)
+```
+
+# Barcode Counts to Median Bin Pipeline
+
+<font color="blue">**This section is based on the R file: "Counts_to_Median_Bin_Fumarate.R".**<font color="black"> It describes how to load all of the pre-existing barcode data necessary for downstream analysis. The end result is a .CSV file containing the total set of observed barcodes, their associated nucleotide and amino acid sequences, activation ("median bin") scores, the lower and upper indices of their activation bins.
+
+## Read in data
+
+```{r}
+# Function to load barcode/BC reads
+read_collapsed_file <- function(filename, sam_name) {
+  df <- read.table(file=filename, sep="\t", header=FALSE)
+  colnames(df) <- c("BC", paste0(sam_name, "reads"), "collapsedBCs")
+  return(df)
+}
+
+F1_bc <- read_collapsed_file("./Final_BC/F1_S13_collapse_d1.tsv", "F1")
+F2_bc <- read_collapsed_file("./Final_BC/F2_S14_collapse_d1.tsv", "F2")
+F3_bc <- read_collapsed_file("./Final_BC/F3_S15_collapse_d1.tsv", "F3")
+F4_bc <- read_collapsed_file("./Final_BC/F4_S16_collapse_d1.tsv", "F4")
+F5_bc <- read_collapsed_file("./Final_BC/F5_S17_collapse_d1.tsv", "F5")
+F6_bc <- read_collapsed_file("./Final_BC/F6_S18_collapse_d1.tsv", "F6")
+F7_bc <- read_collapsed_file("./Final_BC/F7_S19_collapse_d1.tsv", "F7")
+F8_bc <- read_collapsed_file("./Final_BC/F8_S20_collapse_d1.tsv", "F8")
+F9_bc <- read_collapsed_file("./Final_BC/F9_S21_collapse_d1.tsv", "F9")
+F10_bc <- read_collapsed_file("./Final_BC/F10_S22_collapse_d1.tsv", "F10")
+F11_bc <- read_collapsed_file("./Final_BC/F11_S23_collapse_d1.tsv", "F11")
+F12_bc <- read_collapsed_file("./Final_BC/F12_S24_collapse_d1.tsv", "F12")
+```
+
+## Combine and clean the total dataset for fumarate barcodes
+
+Put all BCs into one dataframe for each condition
+
+```{r}
+F_allBC <- F1_bc %>%
+  select(BC) %>%
+  rbind(., F2_bc %>% 
+          select(BC)) %>%
+  rbind(., F3_bc %>% 
+          select(BC)) %>%
+  rbind(., F4_bc %>% 
+          select(BC)) %>%
+  rbind(., F5_bc %>% 
+          select(BC)) %>%
+  rbind(., F6_bc %>% 
+          select(BC)) %>%
+  rbind(., F7_bc %>% 
+          select(BC)) %>%
+  rbind(., F8_bc %>% 
+          select(BC)) %>%
+  rbind(., F9_bc %>% 
+          select(BC)) %>%
+  rbind(., F10_bc %>% 
+          select(BC)) %>%
+  rbind(., F11_bc %>% 
+          select(BC)) %>%
+  rbind(., F12_bc %>% 
+          select(BC)) %>%
+  distinct()
+```
+
+Add counts for barcodes
+
+```{r}
+F_allBC <- left_join(F_allBC, F1_bc %>% select(-collapsedBCs), by="BC")
+F_allBC <- left_join(F_allBC, F2_bc %>% select(-collapsedBCs), by="BC")
+F_allBC <- left_join(F_allBC, F3_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F4_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F5_bc %>% select(-collapsedBCs), by="BC")
+F_allBC <- left_join(F_allBC, F6_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F7_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F8_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F9_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F10_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F11_bc %>% select(-collapsedBCs), by="BC") 
+F_allBC <- left_join(F_allBC, F12_bc %>% select(-collapsedBCs), by="BC")
+```
+
+Filter all barcodes by length.
+
+```{r}
+F_allBC <- F_allBC %>%
+  filter(str_length(BC) >= 24)
+```
+
+If not in a set, force to 0
+
+```{r}
+F_allBC$F1reads[is.na(F_allBC$F1reads)] <- 0
+F_allBC$F2reads[is.na(F_allBC$F2reads)] <- 0
+F_allBC$F3reads[is.na(F_allBC$F3reads)] <- 0
+F_allBC$F4reads[is.na(F_allBC$F4reads)] <- 0
+F_allBC$F5reads[is.na(F_allBC$F5reads)] <- 0
+F_allBC$F6reads[is.na(F_allBC$F6reads)] <- 0
+F_allBC$F7reads[is.na(F_allBC$F7reads)] <- 0
+F_allBC$F8reads[is.na(F_allBC$F8reads)] <- 0
+F_allBC$F9reads[is.na(F_allBC$F9reads)] <- 0
+F_allBC$F10reads[is.na(F_allBC$F10reads)] <- 0
+F_allBC$F11reads[is.na(F_allBC$F11reads)] <- 0
+F_allBC$F12reads[is.na(F_allBC$F12reads)] <- 0
+
+rm(F1_bc,F2_bc,F3_bc,F4_bc,F5_bc,F6_bc,F7_bc,F8_bc,F9_bc,F10_bc,F11_bc,F12_bc)
+```
+
+## Normalize barcode counts to the actual fraction of the population they represent
+
+Without doing this, the bins are weighted equally (pct. total pop = 8.3333%), when in actuality, the population was not perfectly distributed across bins. Population values were calculated by dividing the number of events recorded per bin by total population in a Python script, synTCS-MutLib_FACS_Bin_Population_Fractions.ipynb.
+
+```{r}
+F_bin1_NormVal = 8.3333333/4.49165402
+F_bin2_NormVal = 8.3333333/7.81992919
+F_bin3_NormVal = 8.3333333/8.47749115
+F_bin4_NormVal = 8.3333333/6.96004047
+F_bin5_NormVal = 8.3333333/8.46737481
+F_bin6_NormVal = 8.3333333/9.36772888
+F_bin7_NormVal = 8.3333333/9.5599393
+F_bin8_NormVal = 8.3333333/9.86342944
+F_bin9_NormVal = 8.3333333/13.29286798
+F_bin10_NormVal = 8.3333333/12.28123419
+F_bin11_NormVal = 8.3333333/7.50632271
+F_bin12_NormVal = 8.3333333/1.91198786
+
+F_allBC <- F_allBC %>%
+  mutate(F1reads_corrected = F1reads / F_bin1_NormVal,
+         F2reads_corrected = F2reads / F_bin2_NormVal,
+         F3reads_corrected = F3reads / F_bin3_NormVal,
+         F4reads_corrected = F4reads / F_bin4_NormVal,
+         F5reads_corrected = F5reads / F_bin5_NormVal,
+         F6reads_corrected = F6reads / F_bin6_NormVal,
+         F7reads_corrected = F7reads / F_bin7_NormVal,
+         F8reads_corrected = F8reads / F_bin8_NormVal,
+         F9reads_corrected = F9reads / F_bin9_NormVal,
+         F10reads_corrected = F10reads / F_bin10_NormVal,
+         F11reads_corrected = F11reads / F_bin11_NormVal,
+         F12reads_corrected = F12reads / F_bin12_NormVal
+  ) 
+```
+
+## Compute a relative abundances matrix
+
+Biswas et al., 2021: Compute a relative abundance table, R, by dividing the columns of C by their sums. The columns of R sum to 1.
+
+```{r}
+F1_total <- sum(F_allBC$F1reads_corrected)
+F2_total <- sum(F_allBC$F2reads_corrected)
+F3_total <- sum(F_allBC$F3reads_corrected)
+F4_total <- sum(F_allBC$F4reads_corrected)
+F5_total <- sum(F_allBC$F5reads_corrected)
+F6_total <- sum(F_allBC$F6reads_corrected)
+F7_total <- sum(F_allBC$F7reads_corrected)
+F8_total <- sum(F_allBC$F8reads_corrected)
+F9_total <- sum(F_allBC$F9reads_corrected)
+F10_total <- sum(F_allBC$F10reads_corrected)
+F11_total <- sum(F_allBC$F11reads_corrected)
+F12_total <- sum(F_allBC$F12reads_corrected)
+
+F_allBC_R <- F_allBC %>%
+  mutate(F1_norm=F1reads_corrected/F1_total,
+         F2_norm=F2reads_corrected/F2_total,
+         F3_norm=F3reads_corrected/F3_total,
+         F4_norm=F4reads_corrected/F4_total,
+         F5_norm=F5reads_corrected/F5_total,
+         F6_norm=F6reads_corrected/F6_total,
+         F7_norm=F7reads_corrected/F7_total,
+         F8_norm=F8reads_corrected/F8_total,
+         F9_norm=F9reads_corrected/F9_total,
+         F10_norm=F10reads_corrected/F10_total,
+         F11_norm=F11reads_corrected/F11_total,
+         F12_norm=F12reads_corrected/F12_total) %>%
+  select(BC, F1_norm, F2_norm, F3_norm, F4_norm, F5_norm, F6_norm, F7_norm, F8_norm, F9_norm, F10_norm, F11_norm, F12_norm) %>%
+  dplyr::rename(barcode=BC)
+
+# Check, sum off all values in each column should equal 1
+sum(F_allBC_R$F1_norm)
+```
+
+Calculate the total reads for each barcode across all bins
+
+```{r}
+F_allBC_total_counts <- F_allBC %>% 
+  mutate(BC_SorTotReads = F1reads_corrected + F2reads_corrected + F3reads_corrected + F4reads_corrected + F5reads_corrected + F6reads_corrected + F7reads_corrected + F8reads_corrected + F9reads_corrected + F10reads_corrected + F11reads_corrected + F12reads_corrected) %>% 
+  select(BC, BC_SorTotReads) %>% 
+  dplyr::rename(barcode=BC)
+```
+
+## Merge barcode-relative abundances with nucleotide sequences
+
+Read in barcode-nucleotide sequence mapping file.
+
+```{r}
+consensus_gene <- read.csv(file="./input_files/consensus_gene.csv",head=TRUE,sep=",")
+consensus_gene %>% select(description) %>% distinct() %>% nrow()  # 951065 unique barcodes
+
+consensus_gene2 <- consensus_gene %>%
+  select(description,sequence) %>%
+  dplyr::rename(barcode=description,NTseq=sequence)
+
+# convert to strings
+str(consensus_gene2)
+```
+
+Merge from all bins and create a master list of unique variants and BCs
+
+```{r}
+tgood_F <- right_join(consensus_gene2, F_allBC_R, join_by(barcode)) %>%
+  mutate(NTlen=nchar(as.character(NTseq)))
+
+sum(is.na(tgood_F$NTseq)) #718487 barcodes in F_allBC_R don't have a nucleotide sequence associated with them
+
+# Normalization check, sum of all values in each column should still be 1
+sum(tgood_F$F11_norm) 
+```
+
+Mapping check: how many barcodes have more than 1 variant?
+
+```{r}
+consensus_gene_sum <- consensus_gene2 %>%
+  group_by(barcode) %>%
+  summarise(count=n())
+
+consensus_gene_sum %>%
+  filter(count>1) %>%
+  nrow(.) 
+```
+
+Make a list of BCs with only 1 variant and filter the dataset to keep only barcodes which have been mapped.
+
+```{r}
+bcgood_F <- consensus_gene_sum %>%
+  filter(count==1) %>%
+  select(-count)
+
+# Filter to only keep barcodes which appear
+F_allBC_R_NTfilter <- tgood_F %>%
+  semi_join(bcgood_F,by="barcode") %>% 
+  left_join(F_allBC_total_counts,by="barcode")
+```
+
+## Compute total normalized barcode counts for each bin
+
+```{r}
+F_allBC_R_NTfilter_totals <- F_allBC_R_NTfilter %>%
+  group_by(barcode) %>%
+  summarise(NTseq=NTseq,
+            F1_t=sum(F1_norm),
+            F2_t=sum(F2_norm),
+            F3_t=sum(F3_norm),
+            F4_t=sum(F4_norm),
+            F5_t=sum(F5_norm),
+            F6_t=sum(F6_norm),
+            F7_t=sum(F7_norm),
+            F8_t=sum(F8_norm),
+            F9_t=sum(F9_norm),
+            F10_t=sum(F10_norm),
+            F11_t=sum(F11_norm),
+            F12_t=sum(F12_norm),
+            BC_SorTotReads=BC_SorTotReads)
+```
+
+## Merge barcode-relative abundances with amino acid sequences
+
+Load file of synTCS-MutLib variants - amino acid sequences - and filter to only keep translated sequences
+
+```{r}
+consensus_prot <- read.csv(file="./input_files/consensus_prot_with_PreSortBC.csv",head=TRUE,sep=",")
+
+F_allBC_R_AAfilter <- F_allBC_R_NTfilter_totals %>%
+  left_join(consensus_prot %>% dplyr::rename(barcode=BC),by="barcode")
+
+# Some sequences have mutations which place a stop codon at the beginning and some barcodes were not mapped to amino acid sequences; filter these out.
+F_allBC_R_AAfilter <- F_allBC_R_AAfilter %>%
+  filter(!is.na(seq))
+```
+
+Replace read counts of NA and 0 with an arbitrary value of 0.1 for presort1 and presort2 libraries
+
+```{r}
+F_allBC_R_AAfilter$presort1reads[is.na(F_allBC_R_AAfilter$presort1reads)] <- 0.1
+F_allBC_R_AAfilter$presort1reads[F_allBC_R_AAfilter$presort1reads == 0] <- 0.1
+F_allBC_R_AAfilter$presort2reads[is.na(F_allBC_R_AAfilter$presort2reads)] <- 0.1
+F_allBC_R_AAfilter$presort2reads[F_allBC_R_AAfilter$presort2reads == 0] <- 0.1
+```
+
+## Calculate a fold-change matrix
+
+Biswas et al., 2021: Divide each column of R element-wise by the input relative abundance vector (relative abundance of variants in the library before flow cytometry) to obtain a fold-change table, F.
+
+```{r}
+F_allBC_F <- F_allBC_R_AAfilter %>%
+  mutate(F1_fc=F1_t/presort2_norm,
+         F2_fc=F2_t/presort2_norm,
+         F3_fc=F3_t/presort2_norm,
+         F4_fc=F4_t/presort2_norm,
+         F5_fc=F5_t/presort2_norm,
+         F6_fc=F6_t/presort2_norm,
+         F7_fc=F7_t/presort2_norm,
+         F8_fc=F8_t/presort2_norm,
+         F9_fc=F9_t/presort2_norm,
+         F10_fc=F10_t/presort2_norm,
+         F11_fc=F11_t/presort2_norm,
+         F12_fc=F12_t/presort2_norm)
+```
+
+## Calculate an adjusted abundances table
+
+Biswas et al., 2021: Divide each row of F by its sum to obtain a table of adjusted abundances, A. Each row of A sums to 1.
+
+```{r}
+F_allBC_A <- F_allBC_F %>%
+  mutate(rowsum=F1_fc+F2_fc+F3_fc+F4_fc+F5_fc+F6_fc+F7_fc+F8_fc+F9_fc+F10_fc+F11_fc+F12_fc) %>%
+  mutate(F1=F1_fc/rowsum,
+         F2=F2_fc/rowsum,
+         F3=F3_fc/rowsum,
+         F4=F4_fc/rowsum,
+         F5=F5_fc/rowsum,
+         F6=F6_fc/rowsum,
+         F7=F7_fc/rowsum,
+         F8=F8_fc/rowsum,
+         F9=F9_fc/rowsum,
+         F10=F10_fc/rowsum,
+         F11=F11_fc/rowsum,
+         F12=F12_fc/rowsum)
+```
+
+## Determine median bin for barcodes via cumulative sum across adjusted abundances
+
+```{r}
+# create functions to compute upper and lower index
+maxcs = function(x, output){
+  return(max(which(c(x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12]) < 0.5)))
+}
+mincs = function(x, output){
+  return(min(which(c(x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12]) >= 0.5)))
+}
+
+# Compute cumulative sum across adjusted barcode abundances for all bins to estimate median bin
+F_allBC_CS <- F_allBC_A %>%
+  rowwise() %>%
+  mutate(
+    cumulative_p = list(cumsum(c(F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12))),
+    lower_index = max(which(cumsum(c(F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12)) < 0.5)),
+    upper_index = min(which(cumsum(c(F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12)) >= 0.5)),
+    median = ifelse(
+      is.infinite(lower_index), 
+      1, 
+      lower_index + (0.5 - unlist(cumulative_p)[lower_index]) / 
+        (unlist(cumulative_p)[upper_index] - unlist(cumulative_p)[lower_index])
+    )
+  )
+```
+
+## Export the data as a CSV file
+
+```{r}
+F_allBC_CS_toCSV <- F_allBC_CS %>%
+  select(barcode, NTseq, seq, lower_index, upper_index, median, BC_SorTotReads, presort1reads, presort2reads)
+
+write.csv(F_allBC_CS_toCSV,
+          "./output_files/DcuS_Fumarate_bin_distribution-byBC.csv", row.names = FALSE)
+
+```
+
+# Reproducibility
+
+The session information is provided for full reproducibility.
+
+```{r}
+devtools::session_info()
+```
+
+# References
+
+Biswas, S.; Khimulya, G.; Alley, E. C.; Esvelt, K. M.; Church, G. M. Low-N Protein Engineering with Data-Efficient Deep Learning. Nat. Methods 2021, 18 (4), 389–396. <https://doi.org/10.1038/s41592-021-01100-y>.

@@ -1,0 +1,402 @@
+---
+title: "Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases"
+author: 'Authors: <font color="blue">Luca B. Lippert, </font color="black">Samuel R. Hinton, Andrew Holston, Karl J. Romanowicz, Calin Plesa'
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+---
+
+<font color="black"> **R Notebook:** <font color="green">Provides reproducible analysis for **Statistical analysis of multi-barcoded mutant sequences** in the following manuscript: <font color="black">
+
+**Citation:** Lippert LB, Hinton SR, Holston A, Romanowicz KJ, Plesa C. Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases. *In Prep.* 2026.
+
+**GitHub Repository:** <https://github.com/PlesaLab/DcuSEnvZ>
+
+# Experiment
+
+<font color="black">This pipeline processes</font> <font color="red">*barcode-sequence-phenotype data previously generated in Merge_and_MEFL_Convert.Rmd* <font color="black"> and determines which multi-barcoded mutnts have significant differences between their fold-change scores.
+
+```{css, echo=FALSE}
+.badCode {
+background-color: lightpink;
+font-weight: bold;
+}
+
+.goodCode {
+background-color: lightgreen;
+font-weight: bold;
+}
+
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+# Set global options for notebook
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  message = TRUE,
+  results = "markup",
+  collapse = FALSE
+)
+# Getting the path of your current open file and set as wd
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+print(getwd())
+```
+
+# Packages
+
+The following R packages must be installed prior to loading into the R session. See the **Reproducibility** tab for a complete list of packages and their versions used in this workflow.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+# Make a vector of required packages
+required.packages <- c("devtools", "knitr", "patchwork", "tidyverse", "ggplot2", "dplyr", "tidyr", "magrittr", "stringr", "seqinr", "purrr", "FSA", "rstatix")
+
+# Load required packages
+lapply(required.packages, library, character.only = TRUE)
+```
+
+```{r include=FALSE}
+# set.seed is used to fix the random number generation to make the results repeatable
+set.seed(123)
+```
+
+# Dial-Out Mutant Selection Pipeline
+
+<font color="blue">**This section is based on the R file: "Dial_Out_Mutant_Selection.R".**<font color="black"> It describes how to load all of the pre-existing barcode-sequence-phenotype data necessary for downstream analysis. Here, we use the Kruskal-Walllis (a nonparametric ANOVA) and post-hoc Dunn statistical tests to determine if there are significant differences between the fold-change scores observed for all multi-barcoded mutants. These mutants determined to have significant differences between their phenotype scores were selected from for dial-out PCR and individual characterization. The end result of this script is two .CSV files containing a set of mutant amino acid sequences, their associated barcodes, and phenotype scores.
+
+## Read in data
+
+```{r}
+merged_BC_MEFL_norm <- read.csv(file="./output_files/All_DcuS_Data-medianMEFL.csv", head=T, sep=",")
+```
+
+## Wrangle and filter the data
+
+...the data to associate phenotype with the specific amino acid mutation found in mutant sequences.
+
+For each mutant DcuS sequence, align it to wild-type sequence and determine which amino acids differ. Record three columns: amino acid, position, mutation
+
+```{r}
+# Filter to keep only mutants that are the correct length (192 amino acids) and are associated with more than one barcode
+multiBC_data <- merged_BC_MEFL_norm %>%
+  filter(str_length(AAseq)==192) %>%
+  group_by(AAseq) %>%
+  filter(n_distinct(barcode) > 1) %>%
+  ungroup()
+
+# make a vector of the wild-type sequence to compare mutant sequences to
+wt_seq = "RHSLPYRMLRKRPMKLSTTVILMVSAVLFSVLLVVHLIYFSQISDMTRDGLANKALAVARTLADSPEIRQGLQKKPQESGIQAIAEAVRKRNDLLFIVVTDMQSLRYSHPEAQRIGQPFKGDDILKALNGEENVAINRGFLAQALRVFTPIYDENHKQIGVVAIGLELSRVTQQINDSRWSLQMAAGVKQLA"
+
+# WT sequence as a vector
+wt_seq_vec <- str_split(wt_seq, "")[[1]]
+
+# custom mutation parser
+find_mutations <- function(mut_seq) {
+  mut_vec <- str_split(mut_seq, "")[[1]]
+  # safety check
+  if (length(mut_vec) != length(wt_seq_vec)) {
+    return(NA_character_)
+  }
+  diff_pos <- which(mut_vec != wt_seq_vec)
+  # no mutations
+  if (length(diff_pos) == 0) {
+    return(NA_character_)
+  }
+  # output of the function:
+  paste0(
+    wt_seq_vec[diff_pos],
+    diff_pos +1,
+    mut_vec[diff_pos],
+    collapse = "_"
+  )
+}
+
+multiBC_data <- multiBC_data %>% 
+  # Create the mutation identifier string
+  mutate(mutations = sapply(AAseq, find_mutations)) 
+```
+
+## Statistical test on fold-change scores
+
+Define a function to perform the Kruskal-Wallis and Dunn tests for each observed multi-barcoded mutant
+
+```{r}
+analyze_mutant_wide_FoldChange <- function(df_mutant) {
+  # number of barcodes for each mutant
+  n_barcodes = nrow(df_mutant)
+  seq = df_mutant$AAseq
+  
+  # Pivot only inside the function for stats
+  df_long <- df_mutant %>%
+    pivot_longer(
+      cols = c(NoLig_fc, Fum_fc, Asp_fc),
+      names_to = "Condition",
+      values_to = "MEFL"
+    )
+  # Kruskal–Wallis
+  kw <- kruskal.test(MEFL ~ Condition, data = df_long)
+  # Dunn post-hoc (safe)
+  dunn <- tryCatch({
+    dunnTest(MEFL ~ Condition, data = df_long, method = "bh")$res
+  }, error = function(e) NULL)
+  # Medians computed directly from wide-format columns
+  
+  med_NoLig <- median(df_mutant$NoLig_fc, na.rm = TRUE)
+  med_Fum   <- median(df_mutant$Fum_fc, na.rm = TRUE)
+  med_Asp   <- median(df_mutant$Asp_fc, na.rm = TRUE)
+  # Create a tibble of medians and deltas
+  medians <- tibble(
+    Condition = c("NoLig_fc_med", "Fum_fc_med", "Asp_fc_med"),
+    median_MEFL = c(med_NoLig, med_Fum, med_Asp),
+  )
+  # Return everything
+  list(
+    seq = seq,
+    kw_p = kw$p.value,
+    dunn = dunn,
+    Medians = medians,
+    n_barcodes = n_barcodes
+  )
+}
+```
+
+Run the statistical tests directly from multiBC_data
+
+```{r, warning=FALSE}
+results_FoldChange <- multiBC_data %>%
+  group_by(AAseq) %>%
+  group_map(~ analyze_mutant_wide_FoldChange(.x), .keep = TRUE)
+
+names(results_FoldChange) <- map_chr(results_FoldChange, ~ unique(.x$seq))
+```
+
+Create a summary table of the statistical test results
+
+```{r}
+summary_table_FoldChange <- map_df(
+  names(results_FoldChange),
+  function(m) {
+    res <- results_FoldChange[[m]]
+    # Extract barcode lists and values for this mutant
+    mutant_df <- multiBC_data %>% filter(AAseq == m)
+    barcodes <- mutant_df$barcode %>% unique() %>% paste(collapse = ",")
+    
+    NoLig_Median_MEFL_median = median(mutant_df$NoLig_Median_MEFL)
+    Fum_Median_MEFL_median = median(mutant_df$Fum_Median_MEFL)
+    Asp_Median_MEFL_median = median(mutant_df$Asp_Median_MEFL)
+    
+    NoLig_fc_median = median(mutant_df$NoLig_fc)
+    Fum_fc_median = median(mutant_df$Fum_fc)
+    Asp_fc_median = median(mutant_df$Asp_fc)
+    
+    Fum_DNR_median = median(mutant_df$Fum_DNR)
+    Asp_DNR_median = median(mutant_df$Asp_DNR)
+    Lig_spec_median = median(mutant_df$Lig_spec)
+    
+    # Handle Dunn p-values safely
+    if (!is.null(res$dunn) && "P.adj" %in% colnames(res$dunn)) {
+      dmin <- suppressWarnings(min(res$dunn$P.adj, na.rm = TRUE))
+      if (is.infinite(dmin)) dmin <- NA
+    } else {
+      dmin <- NA
+    }
+    # Handle effect size safely
+    if (!is.null(res$Medians) && "delta_vs_NoLig" %in% colnames(res$Medians)) {
+      deltas <- suppressWarnings(as.numeric(res$Medians$delta_vs_NoLig))
+      max_delta <- if (all(is.na(deltas))) NA else max(abs(deltas), na.rm = TRUE)
+    } else {
+      max_delta <- NA
+    }
+    tibble(
+      seq = m,
+      barcodes = barcodes,
+      n_barcodes = str_count(barcodes, ",") + 1,
+      
+      KW_p = res$kw_p,
+      Dunn_min_padj = dmin,
+      Max_abs_delta = max_delta,
+  
+      NoLig_Median_MEFL_median = NoLig_Median_MEFL_median,
+      Fum_Median_MEFL_median = Fum_Median_MEFL_median,
+      Asp_Median_MEFL_median = Asp_Median_MEFL_median,
+      
+      NoLig_fc_median = NoLig_fc_median,
+      Fum_fc_median = Fum_fc_median,
+      Asp_fc_median = Asp_fc_median,
+      
+      Fum_DNR_median = Fum_DNR_median,
+      Asp_DNR_median = Asp_DNR_median,
+      Lig_spec_median = Lig_spec_median,
+
+    )
+  }
+)
+```
+
+Filter to keep only mutants with a Kruskal-Wallis p-value less than 0.05
+
+```{r}
+significant_mutants_FoldChange <- summary_table_FoldChange %>%
+  filter(KW_p < 0.05)
+```
+
+Export the dial-out mutant data
+
+```{r}
+write.csv(significant_mutants_FoldChange, "./output_files/significant_mutants_FoldChange.csv", row.names = FALSE)
+```
+
+## Statistical test on inferred MEFL values
+
+Define a function to perform the Kruskal-Wallis and Dunn tests for each observed multi-barcoded mutant
+
+```{r}
+analyze_mutant_wide_MedianMEFL <- function(df_mutant) {
+  # number of barcodes for each mutant
+  n_barcodes = nrow(df_mutant)
+  seq = df_mutant$AAseq
+  
+  # Pivot only inside the function for stats
+  df_long <- df_mutant %>%
+    pivot_longer(
+      cols = c(NoLig_Median_MEFL, Fum_Median_MEFL, Asp_Median_MEFL),
+      names_to = "Condition",
+      values_to = "MEFL"
+    )
+  # Kruskal–Wallis
+  kw <- kruskal.test(MEFL ~ Condition, data = df_long)
+  # Dunn post-hoc (safe)
+  dunn <- tryCatch({
+    dunnTest(MEFL ~ Condition, data = df_long, method = "bh")$res
+  }, error = function(e) NULL)
+  # Medians computed directly from wide-format columns
+  
+  med_NoLig <- median(df_mutant$NoLig_Median_MEFL, na.rm = TRUE)
+  med_Fum   <- median(df_mutant$Fum_Median_MEFL, na.rm = TRUE)
+  med_Asp   <- median(df_mutant$Asp_Median_MEFL, na.rm = TRUE)
+  # Create a tibble of medians and deltas
+  medians <- tibble(
+    Condition = c("NoLig_Median_MEFL_med", "Fum_Median_MEFL_med", "Asp_Median_MEFL_med"),
+    median_MEFL = c(med_NoLig, med_Fum, med_Asp),
+  )
+  # Return everything
+  list(
+    seq = seq,
+    kw_p = kw$p.value,
+    dunn = dunn,
+    Medians = medians,
+    n_barcodes = n_barcodes
+  )
+}
+```
+
+Run the statistical tests directly from multiBC_data
+
+```{r, warning=FALSE}
+results_MedianMEFL <- multiBC_data %>%
+  group_by(AAseq) %>%
+  group_map(~ analyze_mutant_wide_MedianMEFL(.x), .keep = TRUE)
+
+names(results_MedianMEFL) <- map_chr(results_MedianMEFL, ~ unique(.x$seq))
+```
+
+Create a summary table of the statistical test results
+
+```{r}
+summary_table_MedianMEFL <- map_df(
+  names(results_MedianMEFL),
+  function(m) {
+    res <- results_MedianMEFL[[m]]
+    # Extract barcode lists and values for this mutant
+    mutant_df <- multiBC_data %>% filter(AAseq == m)
+    barcodes <- mutant_df$barcode %>% unique() %>% paste(collapse = ",")
+    
+    NoLig_Median_MEFL_median = median(mutant_df$NoLig_Median_MEFL)
+    Fum_Median_MEFL_median = median(mutant_df$Fum_Median_MEFL)
+    Asp_Median_MEFL_median = median(mutant_df$Asp_Median_MEFL)
+    
+    NoLig_fc_median = median(mutant_df$NoLig_fc)
+    Fum_fc_median = median(mutant_df$Fum_fc)
+    Asp_fc_median = median(mutant_df$Asp_fc)
+    
+    Fum_DNR_median = median(mutant_df$Fum_DNR)
+    Asp_DNR_median = median(mutant_df$Asp_DNR)
+    Lig_spec_median = median(mutant_df$Lig_spec)
+    
+    # Handle Dunn p-values safely
+    if (!is.null(res$dunn) && "P.adj" %in% colnames(res$dunn)) {
+      dmin <- suppressWarnings(min(res$dunn$P.adj, na.rm = TRUE))
+      if (is.infinite(dmin)) dmin <- NA
+    } else {
+      dmin <- NA
+    }
+    # Handle effect size safely
+    if (!is.null(res$Medians) && "delta_vs_NoLig" %in% colnames(res$Medians)) {
+      deltas <- suppressWarnings(as.numeric(res$Medians$delta_vs_NoLig))
+      max_delta <- if (all(is.na(deltas))) NA else max(abs(deltas), na.rm = TRUE)
+    } else {
+      max_delta <- NA
+    }
+    tibble(
+      seq = m,
+      barcodes = barcodes,
+      n_barcodes = str_count(barcodes, ",") + 1,
+      
+      KW_p = res$kw_p,
+      Dunn_min_padj = dmin,
+      Max_abs_delta = max_delta,
+  
+      NoLig_Median_MEFL_median = NoLig_Median_MEFL_median,
+      Fum_Median_MEFL_median = Fum_Median_MEFL_median,
+      Asp_Median_MEFL_median = Asp_Median_MEFL_median,
+      
+      NoLig_fc_median = NoLig_fc_median,
+      Fum_fc_median = Fum_fc_median,
+      Asp_fc_median = Asp_fc_median,
+      
+      Fum_DNR_median = Fum_DNR_median,
+      Asp_DNR_median = Asp_DNR_median,
+      Lig_spec_median = Lig_spec_median,
+
+    )
+  }
+)
+```
+
+Filter to keep only mutants with a Kruskal-Wallis p-value less than 0.05
+
+```{r}
+significant_mutants_MedianMEFL <- summary_table_MedianMEFL %>%
+  filter(KW_p < 0.05)
+```
+
+Export the dial-out mutant data
+
+```{r}
+write.csv(significant_mutants_MedianMEFL, "./output_files/significant_mutants_MedianMEFL.csv", row.names = FALSE)
+```
+
+# Reproducibility
+
+The session information is provided for full reproducibility.
+
+```{r}
+devtools::session_info()
+```

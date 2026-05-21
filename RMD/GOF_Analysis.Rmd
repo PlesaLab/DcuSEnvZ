@@ -1,0 +1,649 @@
+---
+title: "Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases"
+author: 'Authors: <font color="blue">Luca B. Lippert, </font color="black">Samuel R. Hinton, Andrew Holston, Karl J. Romanowicz, Calin Plesa'
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 5
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+---
+
+<font color="black"> **R Notebook:** <font color="green">Provides reproducible analysis for **Gain-of-function (GOF) Analysis** in the following manuscript: <font color="black">
+
+**Citation:** Lippert LB, Hinton SR, Holston A, Romanowicz KJ, Plesa C. Characterizing Sequence-Function Relationships in Chimeric DcuS/EnvZ Histidine Kinases. *In Prep.* 2026.
+
+**GitHub Repository:** <https://github.com/PlesaLab/DcuSEnvZ>
+
+# Experiment
+
+<font color="black">This pipeline processes</font> <font color="red">*barcode-sequence-phenotype data previously generated in Merge_and_MEFL_Convert.Rmd*. <font color="black"> and determines positions which are significantly enriched for influencing aspartate responsiveness and specificity based on the total number of barcodes observed.
+
+```{css, echo=FALSE}
+.badCode {
+background-color: lightpink;
+font-weight: bold;
+}
+
+.goodCode {
+background-color: lightgreen;
+font-weight: bold;
+}
+
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee; }
+```
+
+```{r setup, include=FALSE, echo=FALSE}
+# Set global options for notebook
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = TRUE,
+  message = TRUE,
+  results = "markup",
+  collapse = FALSE
+)
+# Getting the path of your current open file and set as wd
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+print(getwd())
+```
+
+# Packages
+
+The following R packages must be installed prior to loading into the R session. See the **Reproducibility** tab for a complete list of packages and their versions used in this workflow.
+
+```{r message=FALSE, results='hide', warning=FALSE}
+# Make a vector of required packages
+required.packages <- c("devtools", "knitr", "patchwork", "tidyverse", "ggplot2", "dplyr", "tidyr", "magrittr", "stringr", "seqinr", "ggrepel", "ggExtra")
+
+# Load required packages
+lapply(required.packages, library, character.only = TRUE)
+```
+
+```{r include=FALSE}
+# set.seed is used to fix the random number generation to make the results repeatable
+set.seed(123)
+```
+
+# Gain-of-Function (GOF) Analysis Pipeline
+
+<font color="blue">**This section is based on the R file: "GOF_Analysis.R".**<font color="black"> It describes how to load all of the pre-existing barcode-sequence-phenotype data necessary for downstream analysis. The end result is two scatter plots showing the number of filtered barcodes observed at each position and three additional visualizations for the positions which were found to be significantly enriched for two phenotypes: aspartate responsiveness and specificity.
+
+## Read in data
+
+```{r}
+merged_BC_MEFL_norm <- read.csv(file="./output_files/All_DcuS_Data-medianMEFL.csv", head=T, sep=",")
+```
+
+## Wrangle
+
+...the data to associate phenotype with the specific amino acid mutation found in mutant sequences.
+
+For each mutant DcuS sequence, align it to wild-type sequence and determine which amino acids differ. Record three columns: amino acid, position, mutation
+
+```{r}
+
+# make a vector of the wild-type sequence to compare mutant sequences to
+wt_seq = "RHSLPYRMLRKRPMKLSTTVILMVSAVLFSVLLVVHLIYFSQISDMTRDGLANKALAVARTLADSPEIRQGLQKKPQESGIQAIAEAVRKRNDLLFIVVTDMQSLRYSHPEAQRIGQPFKGDDILKALNGEENVAINRGFLAQALRVFTPIYDENHKQIGVVAIGLELSRVTQQINDSRWSLQMAAGVKQLA"
+
+# WT sequence as a vector
+wt_seq_vec <- str_split(wt_seq, "")[[1]]
+
+# custom mutation parser
+find_mutations <- function(mut_seq) {
+  mut_vec <- str_split(mut_seq, "")[[1]]
+  
+  # safety check
+  if (length(mut_vec) != length(wt_seq_vec)) {
+    return(NA_character_)
+  }
+  
+  diff_pos <- which(mut_vec != wt_seq_vec)
+  
+  # no mutations
+  if (length(diff_pos) == 0) {
+    return(NA_character_)
+  }
+  
+  # output of the function:
+  paste0(
+    wt_seq_vec[diff_pos],
+    diff_pos +1,
+    mut_vec[diff_pos],
+    collapse = "_"
+  )
+}
+
+
+single_mutations <- merged_BC_MEFL_norm %>% 
+  # Filter to only keep mutants that are the correct AA length (192 amino acids)
+  filter(AAlen==192) %>%
+  
+  # Create the mutation identifier string
+  mutate(mutations = sapply(AAseq, find_mutations)) %>%
+  
+  # Remove wildtype data
+  filter(!is.na(mutations)) %>%
+  
+  # Keep only single mutants
+  filter(str_length(mutations) <= 5) %>%
+  
+  # extract out the mutation information for easier visualization/collapse
+  tidyr::extract(mutations,
+                 into = c("wildtype", "position", "mutant"),
+                 regex = "^([A-Z])([0-9]+)([A-Z])$",
+                 convert = TRUE) %>%
+  
+  # Re-create the mutation identifer string for downstream use
+  mutate(mutation = paste0(wildtype, position, mutant, sep="")) 
+  
+```
+
+Define dynamic range of wildtype to both ligands, this will serve as a useful benchmark with which to filer the mutant data
+
+```{r}
+wt_data <- merged_BC_MEFL_norm %>%
+  filter(AAseq==wt_seq) 
+
+NoLig_WTmed = median(wt_data$NoLig_Median_MEFL)
+Fum_WTmed = median(wt_data$Fum_Median_MEFL)
+Asp_WTmed = median(wt_data$Asp_Median_MEFL)
+
+WT_Fum_DNR = log2(Fum_WTmed/NoLig_WTmed)
+WT_Asp_DNR = log2(Asp_WTmed/NoLig_WTmed)
+```
+
+## Gain of Function for Aspartate Responsiveness
+
+To determine positions which are enriched for influencing responsiveness to aspartate, we will first filter the dataset to keep only single mutants with an aspartate dynamic range greater than the wildtype aspartate dynamic range. As seen above, dynamic range (DNR) is defined here as the following:
+
+$DNR = log_2(Lig.MEFL / NoLig. MEFL)$
+
+Next, we will collapse the data by position and keep the total number of unique barcodes, unique mutant residues, and average phenotype scores for each position. Then we will plot the number of observed (at this point, filtered as well) barcodes over position. Positions with barcode counts greater than two standard deviations plus the mean of the dataset will be considered significant.
+
+For aspartate dynamic range, we will infer improved responsiveness based on if the absolute value of aspartate dynamic range is improved. This is because some mutants within the dataset have negative dynamic range values for aspartate, and this is still a response, even if it is in the opposite direction (lower fluorescence when ligand is present) than what we would typically expect for an aspartate biosensor.
+
+Filter the dataset:
+
+```{r}
+aspDNR_abs <- single_mutations %>%
+  # calculate the absolute value of Asp DNR 
+  mutate(Asp_dnr_ABSVal = abs(Asp_DNR)) %>%
+  
+  # first collapse by amino acid sequence and compute some summary statistics
+  group_by(AAseq) %>%
+  summarize(n_barcodes = n_distinct(barcode),
+            AAseq_count = n(),
+            
+            mutation = dplyr::first(mutation),
+            wildtype = dplyr::first(wildtype),
+            position = dplyr::first(position),
+            mutant = dplyr::first(mutant),
+            
+            Asp_dnr_ABSVal = mean(Asp_dnr_ABSVal),
+            
+            NoLig_MEFL_avg = mean(NoLig_Median_MEFL),
+            Fum_MEFL_avg = mean(Fum_Median_MEFL),
+            Asp_MEFL_avg = mean(Asp_Median_MEFL),
+            
+            NoLig_fc = mean(NoLig_fc),
+            Fum_fc = mean(Fum_fc),
+            Asp_fc = mean(Asp_fc),
+            
+            Asp_dnr = mean(Asp_DNR),
+            Fum_dnr = mean(Fum_DNR),
+            Lig_spec = mean(Lig_spec)
+  ) %>%
+  
+  # filter to keep only sequences that have an average absolute aspartate DNR above the observed wildtype aspartate DNR
+  filter(Asp_dnr_ABSVal >= WT_Asp_DNR)
+```
+
+Collapse by position:
+
+```{r}
+aspDNR_abs_positions <- aspDNR_abs %>%
+  # collapse by position
+  group_by(position) %>%
+  summarize(n_barcodes = sum(n_barcodes),
+            n_unique_mutations = n_distinct(mutation),
+            
+            Asp_dnr_ABSVal = mean(Asp_dnr_ABSVal),
+            
+            Asp_dnr = mean(Asp_dnr),
+            Fum_dnr = mean(Fum_dnr),
+            
+            Lig_spec = mean(Lig_spec),
+            
+            NoLig_fc = mean(NoLig_fc),
+            Fum_fc = mean(Fum_fc),
+            Asp_fc = mean(Asp_fc),
+            
+            NoLig_MEFL_avg = mean(NoLig_MEFL_avg),
+            Fum_MEFL_avg = mean(Fum_MEFL_avg),
+            Asp_MEFL_avg = mean(Asp_MEFL_avg)
+  )
+```
+
+Calculate the barcode count distribution and summary statistics:
+
+```{r}
+aspDNR_abs_BCdist <- aspDNR_abs_positions %>%
+  group_by(n_barcodes) %>%
+  summarize(n_observed_positions = n()) 
+
+# For the purposes of this analysis, we will remove positions 55 and 65 from the summary statistics calculations because they are observed to have much larger barcode counts relative to the rest of the dataset; in short, they are outliers. 
+aspDNR_abs_positions_rm <- aspDNR_abs_positions %>%
+  filter(position != 55) %>%
+  filter(position != 65)
+
+aspDNR_abs_meanBC = mean(aspDNR_abs_positions_rm$n_barcodes, na.rm=T)
+aspDNR_abs_sdBC = sd(aspDNR_abs_positions_rm$n_barcodes, na.rm = TRUE)
+aspDNR_abs_mean_sdBC = aspDNR_abs_sdBC + aspDNR_abs_meanBC
+aspDNR_abs_mean_sdBC_2 = (2*aspDNR_abs_sdBC) + aspDNR_abs_meanBC
+
+```
+
+Finally, visualize the results: which positions have a significant number of barcodes associated with increased aspartate dynamic range?
+
+```{r}
+aspDNR_abs_ScatterPlot <- ggplot(data=aspDNR_abs_positions, 
+                                 aes(x=position, y=n_barcodes, color=n_unique_mutations)) +
+  geom_point(size=2) +
+  
+  geom_hline(yintercept = aspDNR_abs_meanBC, linetype="dashed", color="darkblue") +
+  geom_hline(yintercept = aspDNR_abs_mean_sdBC_2, linetype="dashed", color="red3") +
+  
+  #annotate("text", x = Inf, y = aspDNR_abs_meanBC,
+          # label = expression(mu), hjust = 1.1, vjust = -0.5, size = 7) +
+ # annotate("text", x = Inf, y = aspDNR_abs_mean_sdBC_2,
+          # label = expression(paste(mu, "+2",sigma)) , hjust = 1.1, vjust = -0.5, size = 7) +
+  
+  scale_color_gradient2(
+    low = "blue",
+    mid = "blue",
+    high = "red",
+    midpoint=1,
+    name = "Num. Uniq. Mut."
+  ) +
+  
+  labs(x = "Position (aa)",
+       y = "# barcodes") +
+  
+  geom_text_repel(
+    data = subset(aspDNR_abs_positions, n_barcodes >= aspDNR_abs_mean_sdBC_2),
+    aes(label=position), size=6) +
+  
+  scale_x_continuous(breaks=seq(0,192,20)) +
+  scale_y_continuous(breaks=seq(0,260,20)) +
+  
+  theme_classic()  +
+  theme(
+    axis.title = element_text(size = 20, face = "bold"),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    legend.title = element_text(size=20),
+    legend.text = element_text(size = 12),
+    legend.position="top", legend.justification = "right",
+    plot.margin = margin(5.5, 0, 5.5, 5.5)  # no right margin
+  )
+
+aspDNR_abs_withMarginal <- ggExtra::ggMarginal(aspDNR_abs_ScatterPlot,
+                                               type="histogram",
+                                               margins="y",
+                                               bins=nrow(aspDNR_abs_BCdist),
+                                               col="black",
+                                               fill="red")
+aspDNR_abs_withMarginal
+```
+
+## Gain of Function for Aspartate Specificity
+
+Next, we will perform the same operations for aspartate specificity. Here, I define aspartate specificity as a ligand specificity score greater than 0, where ligand specificity is the following:
+
+$Lig. spec. = log_2(Asp. MEFL / Fum. MEFL)$
+
+First, we will filter the dataset
+
+```{r}
+asp_selec <- single_mutations %>%
+  # collapse by mutation and calculate the average phenotype scores observed for that position
+  group_by(mutation) %>%
+  summarize(
+    n_barcodes = n_distinct(barcode),
+    mutation_observed_count = n(),
+    
+    mutation = dplyr::first(mutation),
+    wildtype = dplyr::first(wildtype),
+    position = dplyr::first(position),
+    mutant = dplyr::first(mutant),
+    
+    NoLig_MEFL_avg = mean(NoLig_Median_MEFL),
+    Fum_MEFL_avg = mean(Fum_Median_MEFL),
+    Asp_MEFL_avg = mean(Asp_Median_MEFL),
+    
+    NoLig_fc = mean(NoLig_fc),
+    Fum_fc = mean(Fum_fc),
+    Asp_fc = mean(Asp_fc),
+    
+    Fum_dnr_avg = mean(Fum_DNR),
+    Asp_dnr_avg = mean(Asp_DNR),
+    Lig_spec_avg = mean(Lig_spec)
+  ) %>%
+  # filter for ligand specificity scores greater than 0
+  filter(Lig_spec_avg > 0)
+```
+
+Collapse by position:
+
+```{r}
+asp_selec_positions <- asp_selec %>%
+  group_by(position) %>%
+  summarize(
+    n_mutants = n(),
+    n_unique_mutations = n_distinct(mutation),
+    
+    mutation_observed_counts = sum(mutation_observed_count),
+    n_barcodes = sum(n_barcodes),
+    
+    NoLig_MEFL_avg = mean(NoLig_MEFL_avg),
+    Fum_MEFL_avg = mean(Fum_MEFL_avg),
+    Asp_MEFL_avg = mean(Asp_MEFL_avg),
+    
+    NoLig_fc = mean(NoLig_fc),
+    Fum_fc = mean(Fum_fc),
+    Asp_fc = mean(Asp_fc),
+    
+    Fum_dnr_avg = mean(Fum_dnr_avg),
+    Asp_dnr_avg = mean(Asp_dnr_avg),
+    Lig_spec_avg = mean(Lig_spec_avg)
+  )
+```
+
+Calculate the barcode count distribution and summary statistics:
+
+```{r}
+asp_selec_BCdist <- asp_selec_positions %>%
+  group_by(n_barcodes) %>%
+  summarize(n_observed_positions = n()) 
+
+asp_selec_positions_rm <- asp_selec_positions %>%
+  filter(position != 55) %>%
+  filter(position != 65)
+
+asp_selec_mu = mean(asp_selec_positions_rm$n_barcodes, na.rm=T)
+asp_selec_sigma = sd(asp_selec_positions_rm$n_barcodes, na.rm=T)
+asp_selec_mu_plus_sigma = asp_selec_mu + asp_selec_sigma
+asp_selec_mu_plus_2sigma = asp_selec_mu + (2*asp_selec_sigma)
+```
+
+Finally, visualize the results: which positions have a significant number of barcodes associated with increased aspartate specificity?
+
+```{r}
+asp_selec_ScatterPlot <- ggplot(data=asp_selec_positions, 
+                                aes(x=position, y=n_barcodes, color=n_unique_mutations)) +
+  geom_point(size=2) +
+  
+  geom_hline(yintercept = asp_selec_mu, linetype="dashed", color="darkblue") +
+  geom_hline(yintercept = asp_selec_mu_plus_2sigma, linetype="dashed", color="red3") +
+  
+  scale_color_gradient2(
+    low = "blue",
+    mid = "blue",
+    high = "red",
+    midpoint=1,
+    name = "Num. Uniq. Mut."
+  ) +
+  
+  labs(x = "Position (aa)",
+       y = "# barcodes") +
+  
+  geom_text_repel(
+    data = subset(asp_selec_positions, n_barcodes >= asp_selec_mu_plus_2sigma),
+    aes(label=position), size=6) +
+  
+  scale_x_continuous(breaks=seq(0,192,20)) +
+  scale_y_continuous(breaks=seq(0,260,20)) +
+  
+  theme_classic()  +
+  theme(
+    axis.title = element_text(size = 20, face = "bold"),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    legend.title = element_text(size=20),
+    legend.text = element_text(size = 12),
+    legend.position="top", legend.justification = "right",
+    plot.margin = margin(5.5, 0, 5.5, 5.5)  # no right margin
+  )
+
+
+asp_selec_withMarginal <- ggExtra::ggMarginal(asp_selec_ScatterPlot,
+                                              type="histogram",
+                                              margins="y",
+                                              bins=nrow(asp_selec_BCdist),
+                                              col="black",
+                                              fill="red")
+asp_selec_withMarginal
+
+```
+
+## Visualize observed mutant phenotypes for signficant positions
+
+Next, we will make heatmaps to visualize what the aspartate dynamic range and ligand specificity scores are for the mutants observed for each significant position.
+
+```{r}
+# These are the positions which were the same among the positions identified as significant for both responsiveness and specificity 
+desired_positions <- c(11, 13, 32, 36, 49, 54, 55, 65, 105, 165, 193)
+
+# Filter for these positions
+sig_residues <- single_mutations %>%
+  filter(position %in% desired_positions) %>% 
+  
+  # Calculate average phenotype scores for the observed mutants at these positions
+  group_by(mutation) %>%
+  summarize(n_barcodes = n_distinct(barcode),
+            AAseq_count = n(),
+            wildtype = dplyr::first(wildtype),
+            position = dplyr::first(position),
+            mutant = dplyr::first(mutant),
+            
+            NoLig_MEFL_avg = mean(NoLig_Median_MEFL),
+            Fum_MEFL_avg = mean(Fum_Median_MEFL),
+            Asp_MEFL_avg = mean(Asp_Median_MEFL),
+    
+            NoLig_fc = mean(NoLig_fc, na.rm=T),
+            Fum_fc = mean(Fum_fc, na.rm=T),
+            Asp_fc = mean(Asp_fc, na.rm=T),
+            
+            Asp_dynamic_range = mean(Asp_DNR, na.rm=T),
+            Fum_dynamic_range = mean(Fum_DNR, na.rm=T),
+            Ligand_specificity = mean(Lig_spec, na.rm=T)
+            )
+```
+
+Wrangle the data for visualization
+
+```{r}
+# custom ordering of amino acids for heatmaps
+ordered_aa <- c("K", "R", "H", "E", "D", "N", "Q", "T", "S", "C", "G", "A", "V", "L", "I", "M", "P", "Y", "F", "W")
+position = 2:193
+
+# Make a completed dataframe which will make tiles for mutations not present gray in the resultant heatmap
+sig_residues_plot <- sig_residues %>%
+  complete(
+    position = full_seq(position, 1),
+    mutant = ordered_aa
+  ) 
+
+# re-order the data to align with custom amino acid order
+sig_residues_plot <- sig_residues_plot %>%
+  mutate(
+    aa = factor(mutant, levels = ordered_aa),
+    position = factor(position, levels = desired_positions)
+  ) %>%
+  filter(position %in% desired_positions)
+
+# calculate averages to add above 
+averages <- sig_residues_plot %>%
+  group_by(position) %>%
+  summarize(
+    Fum_dnr_avg_score = mean(Fum_dynamic_range, na.rm=T),
+    Asp_dnr_avg_score = mean(Asp_dynamic_range, na.rm=T),
+    Lig_spec_avg_score = mean(Ligand_specificity, na.rm=T)
+  ) %>%
+  mutate(row_id = row_number())
+
+as.numeric(averages$row_id)
+```
+
+Aspartate dynamic range heatmap
+
+```{r}
+ggplot(sig_residues_plot, aes(x = position, y = aa, fill = Asp_dynamic_range, label=n_barcodes)) +
+  geom_tile() +
+  geom_text(size = 5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",midpoint=0, name="DNR",
+                       na.value="gray") +
+  
+  geom_segment(aes(x=1, y=22,xend = 8, yend=22), colour="gray0")+
+  geom_rect(data=averages, aes(xmin=row_id-0.5,xmax=row_id+0.5, ymin=21.5, ymax=22.5, fill=Asp_dnr_avg_score), inherit.aes = FALSE) +
+  
+  labs( title = "Aspartate Responsiveness",
+        x = "Position (aa)",
+        y = "Amino Acid",
+        fill = "DNR"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 20),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 16),
+    panel.grid = element_blank(),
+    legend.position="top", legend.justification="right"
+  )
+```
+
+Fumarate dynamic range heatmap
+
+```{r}
+ggplot(sig_residues_plot, aes(x = position, y = aa, fill = Fum_dynamic_range, label=n_barcodes)) +
+  geom_tile() +
+  geom_text(size = 5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",midpoint=0, name="DNR",
+                       na.value="gray") +
+  
+  geom_segment(aes(x=1, y=22,xend = 8, yend=22), colour="gray0")+
+  geom_rect(data=averages, aes(xmin=row_id-0.5,xmax=row_id+0.5, ymin=21.5, ymax=22.5, fill=Fum_dnr_avg_score), inherit.aes = FALSE) +
+  
+  labs( title = "Fumarate Responsiveness",
+        x = "Position (aa)",
+        y = "Amino Acid",
+        fill = "DNR"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 20),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 16),
+    panel.grid = element_blank(),
+    legend.position="top", legend.justification="right"
+  )
+```
+
+Ligand specificity heatmap
+
+```{r}
+ggplot(sig_residues_plot, aes(x = position, y = aa, fill = Ligand_specificity, label=n_barcodes)) +
+  geom_tile() +
+  geom_text(size = 5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",midpoint=0, name="Lig. Spec.",
+                       na.value="gray") +
+  
+  geom_segment(aes(x=1, y=22,xend = 8, yend=22), colour="gray0")+
+  geom_rect(data=averages, aes(xmin=row_id-0.5,xmax=row_id+0.5, ymin=21.5, ymax=22.5, fill=Lig_spec_avg_score), inherit.aes = FALSE) +
+  
+  labs( title = "Aspartate Specificity",
+        x = "Position (aa)",
+        y = "Amino Acid",
+        fill = "Lig. Spec."
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 20),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 16),
+    panel.grid = element_blank(),
+    legend.position="top", legend.justification="right"
+  )
+```
+
+How do aspartate dynamic range, fumarate dynamic range, and ligand specificity scores relate?
+
+```{r}
+# Scatter plot for correlation between fumarate DNR and aspartate DNR among significant residues
+fita <- lm(Fum_dynamic_range ~ Asp_dynamic_range, data = sig_residues)      # linear regression, formula = y ~ x
+r2a <- summary(fita)$r.squared
+
+ggplot(sig_residues, aes(x=Asp_dynamic_range, y=Fum_dynamic_range)) +
+  
+  geom_point(aes(fill = Ligand_specificity), shape=21, size=4) + 
+  scale_fill_gradient2(low = "blue", high = "red", mid="gold",midpoint=0, name="Lig. Spec.") +
+  geom_smooth(
+    method="lm",
+    formula = y ~ x,
+    se = FALSE,
+    color="gray25"
+  ) +
+  labs(#title = "Fumarate and Aspartate Dynamic Range values",
+    #subtitle = "Mutations with Fumarate DNR = 0 removed",
+    x="Aspartate Dynamic Range",
+    y="Fumarate Dynamic Range",
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = ", round(r2a, 3)),
+    hjust = 1.1, vjust = -2,
+    size = 8
+  ) + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title = element_text(size = 20),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 16),
+    panel.grid = element_blank(),
+    legend.position="top", legend.justification="right"
+  )
+```
+
+# Reproducibility
+
+The session information is provided for full reproducibility.
+
+```{r}
+devtools::session_info()
+```
