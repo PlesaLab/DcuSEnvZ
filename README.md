@@ -31,6 +31,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 **Figshare Data Repositories**
 - [Barcode Count Files](https://doi.org/10.6084/m9.figshare.32351418)
+- [Other Data Files Inputted/Outputted](https://doi.org/10.6084/m9.figshare.32340699)
 
 **Direct any questions regarding this repository to the corresponding author:** [Calin Plesa](mailto:calin@uoregon.edu).
 
