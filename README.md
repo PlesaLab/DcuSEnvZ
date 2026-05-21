@@ -20,7 +20,7 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [Structure Annotation - DSSP Output Processing](Scripts/DSSP_output_processing.ipynb)
 
-[Fold Change Heatmaps](Rendered_HTML/Fold_Change_Heatmaps.html)
+[Fold Change Heatmaps](https://rpubs.com/lucablipp/1434483)
 
 [Gain-of-Function Analysis](https://rpubs.com/lucablipp/1434472)
 
