@@ -10,11 +10,11 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [synTCS-MutLib bin boundaries and population fraction calculations](Scripts/synTCS-MutLib_FACS_Bin_Population_Fractions.ipynb)
 
-[Barcode Counts to Median Bin for No Ligand Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_NoLigand.html)
+[Barcode Counts to Median Bin for No Ligand Samples](https://rpubs.com/lucablipp/1434481)
 
 [Barcode Counts to Median Bin for Fumarate Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_Fumarate.html)
 
-[Barcode Counts to Median Bin for Aspartate Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_Aspartate.html)
+[Barcode Counts to Median Bin for Aspartate Samples](https://rpubs.com/lucablipp/1434482)
 
 [Merge and MEFL Convert](https://rpubs.com/lucablipp/1434468)
 
