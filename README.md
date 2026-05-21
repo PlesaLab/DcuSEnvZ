@@ -16,18 +16,21 @@ This GitHub repository hosts R Markdown (RMD), Jupyter Notebook (IPYNB), additio
 
 [Barcode Counts to Median Bin for Aspartate Samples](Rendered_HTML/Barcode_Counts_to_Median_Bin_Aspartate.html)
 
-[Merge and MEFL Convert](Rendered_HTML/Merge_and_MEFL_Convert.html)
+[Merge and MEFL Convert](https://rpubs.com/lucablipp/1434468)
 
 [Structure Annotation - DSSP Output Processing](Rendered_HTML/DSSP_output_processing.html)
 
 [Fold Change Heatmaps](Rendered_HTML/Fold_Change_Heatmaps.html)
 
-[Gain-of-Function Analysis](Rendered_HTML/GOF_Analysis.html)
+[Gain-of-Function Analysis](https://rpubs.com/lucablipp/1434472)
 
 [Dial-Out Mutant Selection](Rendered_HTML/Dial_Out_Mutant_Selection.html)
 
 **NCBI BioProject:**
 - Project Accession Number: PRJNA1468850 for raw .fastq files used in Makefile
+
+**Figshare Data Repositories**
+- [Barcode Count Files](https://doi.org/10.6084/m9.figshare.32351418)
 
 **Direct any questions regarding this repository to the corresponding author:** [Calin Plesa](mailto:calin@uoregon.edu).
 
